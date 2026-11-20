@@ -18,3 +18,5 @@ export type ApplicationForm = z.infer<typeof personalSchema> &
   z.infer<typeof experienceSchema> &
   z.infer<typeof skillsSchema> &
   z.infer<typeof reviewSchema>;
+
+export type ItemName = `workExperience.${number}`;

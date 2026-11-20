@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { useCallback, useEffect, useRef, useState } from "react";
-import { FormProvider, useForm } from "react-hook-form";
+import { useEffect, useRef, useState } from "react";
+import type { FormEvent } from "react";
+import { FormProvider, useForm, useWatch } from "react-hook-form";
 import type { Resolver } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -8,10 +9,15 @@ import {
   Box,
   Button,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Paper,
   Stack,
   Step,
-  StepLabel,
+  StepButton,
   Stepper,
   Typography,
 } from "@mui/material";
@@ -32,12 +38,18 @@ import {
 } from "./types/AppForm";
 import type { ApplicationPayload } from "./types/AppForm";
 import type { ApplicationForm } from "./types/Common";
-import { StepPersonal } from "./Components/Wizard/StepPersonal";
-import { StepExperience } from "./Components/Wizard/StepExperience";
+import {
+  clearDraft,
+  readDraft,
+  useAutoSave,
+} from "./Components/Hooks/useDraft";
+import type { Draft } from "./Components/Hooks/useDraft";
+import { StepPersonal } from "./Components/Wizard/StepPersonal/StepPersonal";
+import { StepExperience } from "./Components/Wizard/StepExperience/StepExperience";
 import { StepSkills } from "./Components/Wizard/StepSkills";
 import { StepReview } from "./Components/Wizard/StepReview";
+import { UnsavedChangesGuard } from "./Components/Wizard/UnsavedChanges";
 
-// Mỗi bước có schema riêng: "Tiếp tục" chỉ kiểm tra đúng bước đang đứng
 const STEP_SCHEMAS = [
   personalSchema,
   experienceSchema,
@@ -45,33 +57,55 @@ const STEP_SCHEMAS = [
   reviewSchema,
 ];
 const LAST = STEP_SCHEMAS.length - 1;
-const DRAFT_KEY = "job-application-draft";
 
-function readDraft(): { values: ApplicationForm; step: number } {
-  try {
-    const raw = localStorage.getItem(DRAFT_KEY);
-    if (!raw) return { values: defaultValues, step: 0 };
-    const { values, step } = JSON.parse(raw);
-    return {
-      values: { ...defaultValues, ...values, avatar: null },
-      step: Math.min(Number(step) || 0, LAST),
-    };
-  } catch {
-    return { values: defaultValues, step: 0 };
-  }
+function SubmitButton({
+  isLast,
+  submitting,
+  onSubmit,
+}: {
+  isLast: boolean;
+  submitting: boolean;
+  onSubmit: () => void;
+}) {
+  const agreed = useWatch<ApplicationForm, "agreedToTerms">({
+    name: "agreedToTerms",
+  });
+
+  return (
+    <>
+      {!isLast && (
+        <Button type="submit" variant="outlined" disabled={submitting}>
+          Tiếp tục
+        </Button>
+      )}
+      <Button
+        type={isLast ? "submit" : "button"}
+        onClick={isLast ? undefined : onSubmit}
+        variant="contained"
+        disabled={submitting || (isLast && !agreed)}
+        startIcon={
+          submitting ? (
+            <CircularProgress size={16} color="inherit" />
+          ) : undefined
+        }
+      >
+        {submitting ? "Đang gửi…" : "Gửi hồ sơ"}
+      </Button>
+    </>
+  );
 }
 
 export default function App() {
-  const [initial] = useState(readDraft);
-  const [step, setStep] = useState(initial.step);
+  const [draft, setDraft] = useState<Draft | null>(() => readDraft(LAST));
+  const [step, setStep] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [result, setResult] = useState<ApplicationPayload | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const stepRef = useRef(step);
-  useEffect(() => {
-    stepRef.current = step;
-  }, [step]);
+  const revalidate = useRef(false);
+  const pendingFocus = useRef<keyof ApplicationForm | null>(null);
 
   const resolver: Resolver<ApplicationForm> = (values, context, options) =>
     zodResolver(STEP_SCHEMAS[stepRef.current] as any)(
@@ -81,54 +115,67 @@ export default function App() {
     ) as any;
 
   const methods = useForm<ApplicationForm>({
-    defaultValues: initial.values,
+    defaultValues,
     mode: "onTouched",
+    reValidateMode: "onSubmit",
     resolver,
   });
-  const { watch, getValues, trigger, setError, reset } = methods;
-  const agreed = watch("agreedToTerms");
+  const { getValues, trigger, setError, setFocus, reset } = methods;
 
-  /* ----- Lưu nháp vào localStorage (không lưu file ảnh) ----- */
-  const saveDraft = useCallback(
-    (s: number) => {
-      const { avatar: _avatar, ...values } = getValues();
-      localStorage.setItem(DRAFT_KEY, JSON.stringify({ values, step: s }));
-    },
-    [getValues],
-  );
-  useEffect(() => {
-    if (result) return;
-    const sub = watch(() => saveDraft(stepRef.current));
-    return () => sub.unsubscribe();
-  }, [watch, saveDraft, result]);
-  useEffect(() => {
-    if (!result) saveDraft(step);
-  }, [step, saveDraft, result]);
+  useAutoSave(methods, step, !draft && !result);
 
-  // Khi bị đẩy về bước có lỗi lúc submit, kiểm tra lại để hiện lỗi
-  const revalidate = useRef(false);
+  useEffect(() => {
+    stepRef.current = step;
+  }, [step]);
+
   useEffect(() => {
     if (revalidate.current) {
       revalidate.current = false;
-      void trigger();
+      void trigger(undefined, { shouldFocus: true });
     }
-  }, [step, trigger]);
+    if (pendingFocus.current) {
+      setFocus(pendingFocus.current);
+      pendingFocus.current = null;
+    }
+  }, [step, trigger, setFocus]);
 
-  /* ----- Điều hướng ----- */
+  const restoreDraft = () => {
+    if (!draft) return;
+    reset(draft.values, { keepDefaultValues: true });
+    setStep(draft.step);
+    setDraft(null);
+  };
+
+  const discardDraft = () => {
+    clearDraft();
+    setDraft(null);
+  };
+
+  const handleReset = () => {
+    reset(defaultValues);
+    clearDraft();
+    setServerError(null);
+    setStep(0);
+    setConfirmReset(false);
+  };
+
   const handleNext = async () => {
     if (step === 0) await ensureEmailChecked(getValues("email"));
-    if (await trigger()) setStep((s) => s + 1);
+    if (await trigger(undefined, { shouldFocus: true })) setStep((s) => s + 1);
   };
   const handleBack = () => setStep((s) => Math.max(0, s - 1));
 
-  /* ----- Submit ----- */
   const handleSubmit = async () => {
-    if (!(await trigger())) return;
+    await ensureEmailChecked(getValues("email"));
     const all = getValues();
-    for (let i = 0; i < LAST; i++) {
+    for (let i = 0; i <= LAST; i++) {
       if (!STEP_SCHEMAS[i].safeParse(all).success) {
-        revalidate.current = true;
-        setStep(i);
+        if (i === step) {
+          void trigger(undefined, { shouldFocus: true });
+        } else {
+          revalidate.current = true;
+          setStep(i);
+        }
         return;
       }
     }
@@ -138,16 +185,15 @@ export default function App() {
     try {
       const payload = buildPayload(all);
       await submitApplication(payload);
-      console.log(JSON.stringify(payload, null, 2));
-      localStorage.removeItem(DRAFT_KEY);
+      clearDraft();
       setResult(payload);
     } catch (e) {
       if (e instanceof ServerValidationError) {
-        // map lỗi server vào đúng ô input rồi đưa người dùng về bước đó
         Object.entries(e.fieldErrors).forEach(([name, message]) =>
           setError(name as keyof ApplicationForm, { type: "server", message }),
         );
-        const first = Object.keys(e.fieldErrors)[0];
+        const [first] = Object.keys(e.fieldErrors);
+        pendingFocus.current = first as keyof ApplicationForm;
         setStep(FIELD_STEP[first] ?? 0);
       } else {
         setServerError("Máy chủ gặp lỗi (500). Vui lòng thử lại sau.");
@@ -157,7 +203,6 @@ export default function App() {
     }
   };
 
-  /* ----- Màn hình thành công ----- */
   if (result) {
     return (
       <Paper sx={{ p: 3, maxWidth: 760, mx: "auto" }}>
@@ -198,28 +243,58 @@ export default function App() {
 
   return (
     <FormProvider {...methods}>
+      <UnsavedChangesGuard />
       <Paper
         component="form"
         noValidate
-        onSubmit={(e: React.FormEvent) => {
+        aria-labelledby="form-title"
+        onSubmit={(e: FormEvent) => {
           e.preventDefault();
           void (step === LAST ? handleSubmit() : handleNext());
         }}
         sx={{ p: { xs: 2, sm: 3 }, maxWidth: 760, mx: "auto" }}
       >
-        <Typography variant="h5" fontWeight={600} sx={{ mb: 3 }}>
-          Hồ sơ ứng tuyển lập trình viên
-        </Typography>
+        <Stack
+          direction="row"
+          justifyContent="space-between"
+          alignItems="center"
+          sx={{ mb: 3 }}
+        >
+          <Typography
+            id="form-title"
+            variant="h5"
+            component="h1"
+            fontWeight={600}
+          >
+            Hồ sơ ứng tuyển lập trình viên
+          </Typography>
+          <Button
+            type="button"
+            size="small"
+            color="error"
+            disabled={submitting}
+            onClick={() => setConfirmReset(true)}
+          >
+            Xóa toàn bộ biểu mẫu
+          </Button>
+        </Stack>
 
-        <Stepper activeStep={step} alternativeLabel sx={{ mb: 4 }}>
-          {STEP_LABELS.map((label) => (
+        <Stepper
+          activeStep={step}
+          alternativeLabel
+          nonLinear
+          aria-label="Tiến trình nộp hồ sơ"
+          sx={{ mb: 4 }}
+        >
+          {STEP_LABELS.map((label, i) => (
             <Step key={label}>
-              <StepLabel>{label}</StepLabel>
+              <StepButton onClick={() => setStep(i)} disabled={submitting}>
+                {label}
+              </StepButton>
             </Step>
           ))}
         </Stepper>
 
-        {/* Dữ liệu nằm chung trong một form nên chuyển bước không bị mất */}
         <Box sx={{ minHeight: 280 }}>
           {step === 0 && <StepPersonal />}
           {step === 1 && <StepExperience />}
@@ -242,24 +317,53 @@ export default function App() {
             Quay lại
           </Button>
           <Box sx={{ flexGrow: 1 }} />
-          <Button
-            type="submit"
-            variant="contained"
-            disabled={submitting || (step === LAST && !agreed)}
-            startIcon={
-              submitting ? (
-                <CircularProgress size={16} color="inherit" />
-              ) : undefined
-            }
-          >
-            {step === LAST
-              ? submitting
-                ? "Đang gửi…"
-                : "Gửi hồ sơ"
-              : "Tiếp tục"}
-          </Button>
+          <SubmitButton
+            isLast={step === LAST}
+            submitting={submitting}
+            onSubmit={() => void handleSubmit()}
+          />
         </Stack>
       </Paper>
+
+      <Dialog
+        open={Boolean(draft)}
+        aria-labelledby="draft-title"
+        aria-describedby="draft-desc"
+      >
+        <DialogTitle id="draft-title">Khôi phục dữ liệu?</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="draft-desc">
+            Bạn có muốn khôi phục dữ liệu đã nhập dở trước đó không?
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={discardDraft}>Bỏ qua</Button>
+          <Button onClick={restoreDraft} autoFocus>
+            Khôi phục
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={confirmReset}
+        onClose={() => setConfirmReset(false)}
+        aria-labelledby="reset-title"
+        aria-describedby="reset-desc"
+      >
+        <DialogTitle id="reset-title">Xóa toàn bộ biểu mẫu?</DialogTitle>
+        <DialogContent>
+          <DialogContentText id="reset-desc">
+            Toàn bộ dữ liệu đã nhập và bản nháp đã lưu sẽ bị xóa, không thể hoàn
+            tác.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConfirmReset(false)}>Hủy</Button>
+          <Button color="error" onClick={handleReset}>
+            Xóa
+          </Button>
+        </DialogActions>
+      </Dialog>
     </FormProvider>
   );
 }

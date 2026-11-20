@@ -44,14 +44,12 @@ export const FIELD_STEP: Record<string, number> = {
 export function buildPayload(v: ApplicationForm) {
   const years = Number(v.yearsOfExperience);
   return {
-    personal: {
+    personalInfo: {
       fullName: v.fullName.trim(),
       email: v.email.trim(),
       phone: v.phone.trim(),
       dob: v.dob,
-      avatar: v.avatar
-        ? { name: v.avatar.name, size: v.avatar.size, type: v.avatar.type }
-        : null,
+      avatarName: v.avatar?.name ?? null,
     },
     experience: {
       position: v.position,
@@ -59,13 +57,26 @@ export function buildPayload(v: ApplicationForm) {
       portfolioUrl: years === 0 ? v.portfolioUrl.trim() : null,
       workExperience:
         years >= 1
-          ? v.workExperience.map((w) => ({
-              ...w,
-              endDate: w.isCurrent ? null : w.endDate,
-            }))
+          ? v.workExperience.map(
+              ({
+                companyName,
+                role,
+                startDate,
+                endDate,
+                isCurrent,
+                description,
+              }) => ({
+                companyName,
+                role,
+                startDate,
+                endDate: isCurrent ? null : endDate,
+                isCurrent,
+                description,
+              }),
+            )
           : [],
     },
-    skills: {
+    expectations: {
       skills: v.skills,
       expectedSalary: Number(v.expectedSalary),
       workMode: v.workMode,
@@ -88,7 +99,7 @@ export async function submitApplication(
   payload: ApplicationPayload,
 ): Promise<{ id: string }> {
   await new Promise((r) => setTimeout(r, 1500));
-  if (payload.personal.fullName.toLowerCase().includes("error")) {
+  if (payload.personalInfo.fullName.toLowerCase().includes("error")) {
     throw new ServerValidationError({ fullName: "Máy chủ từ chối họ tên này" });
   }
   return { id: String(Date.now()) };

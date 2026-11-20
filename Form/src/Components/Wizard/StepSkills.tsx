@@ -1,4 +1,4 @@
-import { Controller, useFormContext } from "react-hook-form";
+import { Controller, useFormContext, useWatch } from "react-hook-form";
 import {
   Autocomplete,
   FormControl,
@@ -13,21 +13,33 @@ import {
   Typography,
 } from "@mui/material";
 import { LEVELS, WORK_MODES, formatVnd } from "../../types/Common";
-import { SKILL_SUGGESTIONS } from "../../types/Skills";
 import type { ApplicationForm } from "../../types/Common";
+import { SKILL_SUGGESTIONS } from "../../types/Skills";
 import type { Level } from "../../types/Skills";
-import { errMsg, useTextField } from "../Hooks/useTextField";
+import { FormTextField, errMsg } from "./FormTextField";
+
+function TimezoneField() {
+  const workMode = useWatch<ApplicationForm, "workMode">({ name: "workMode" });
+  if (workMode !== "Remote") return null;
+
+  return (
+    <FormTextField
+      name="timezone"
+      label="Múi giờ làm việc"
+      placeholder="Asia/Ho_Chi_Minh hoặc UTC+7"
+    />
+  );
+}
 
 export function StepSkills() {
-  const { control, watch } = useFormContext<ApplicationForm>();
-  const tf = useTextField();
-  const workMode = watch("workMode");
+  const { control } = useFormContext<ApplicationForm>();
 
   return (
     <Stack spacing={2.5}>
-      <Typography variant="h6">Kỹ năng & kỳ vọng</Typography>
+      <Typography variant="h6">
+        Kỹ năng & kỳ vọng
+      </Typography>
 
-      {/* Kỹ năng: chọn từ gợi ý hoặc tự gõ thêm, mỗi kỹ năng có mức thành thạo */}
       <Controller
         name="skills"
         control={control}
@@ -36,6 +48,7 @@ export function StepSkills() {
           return (
             <Stack spacing={1.5}>
               <Autocomplete
+                id="skills"
                 multiple
                 freeSolo
                 options={SKILL_SUGGESTIONS}
@@ -58,6 +71,7 @@ export function StepSkills() {
                 renderInput={(params) => (
                   <TextField
                     {...params}
+                    inputRef={field.ref}
                     label="Kỹ năng (chọn hoặc gõ rồi Enter)"
                     error={!!fieldState.error}
                     helperText={
@@ -72,11 +86,12 @@ export function StepSkills() {
                   key={s.name}
                   direction="row"
                   spacing={2}
-                  alignItems="center"
+                  sx={{ alignItems: "center" }}
                 >
                   <Typography sx={{ flex: 1 }}>{s.name}</Typography>
                   <TextField
                     select
+                    id={`skill-level-${i}`}
                     size="small"
                     label="Mức độ"
                     value={s.level}
@@ -104,12 +119,12 @@ export function StepSkills() {
         }}
       />
 
-      {/* Mức lương: tự định dạng 25,000,000 khi gõ, state chỉ lưu chữ số */}
       <Controller
         name="expectedSalary"
         control={control}
         render={({ field, fieldState }) => (
           <TextField
+            id="expectedSalary"
             label="Mức lương kỳ vọng"
             size="small"
             fullWidth
@@ -117,11 +132,13 @@ export function StepSkills() {
             value={formatVnd(field.value)}
             onChange={(e) => field.onChange(e.target.value.replace(/\D/g, ""))}
             onBlur={field.onBlur}
+            inputRef={field.ref}
             error={!!fieldState.error}
             helperText={
               errMsg(fieldState.error) ?? "Từ 5,000,000 đến 200,000,000 VNĐ"
             }
             slotProps={{
+              htmlInput: { inputMode: "numeric" },
               input: {
                 endAdornment: (
                   <Typography color="text.secondary">VNĐ</Typography>
@@ -137,8 +154,13 @@ export function StepSkills() {
         control={control}
         render={({ field }) => (
           <FormControl>
-            <FormLabel>Hình thức làm việc</FormLabel>
-            <RadioGroup row value={field.value} onChange={field.onChange}>
+            <FormLabel id="workMode-label">Hình thức làm việc</FormLabel>
+            <RadioGroup
+              row
+              aria-labelledby="workMode-label"
+              value={field.value}
+              onChange={field.onChange}
+            >
               {WORK_MODES.map((m) => (
                 <FormControlLabel
                   key={m}
@@ -153,13 +175,7 @@ export function StepSkills() {
         )}
       />
 
-      {workMode === "Remote" && (
-        <TextField
-          label="Múi giờ làm việc"
-          placeholder="Asia/Ho_Chi_Minh hoặc UTC+7"
-          {...tf("timezone")}
-        />
-      )}
+      <TimezoneField />
     </Stack>
   );
 }

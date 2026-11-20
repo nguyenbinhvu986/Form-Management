@@ -12,7 +12,7 @@ import {
 } from "@mui/material";
 import { formatVnd } from "../../types/Common";
 import type { ApplicationForm } from "../../types/Common";
-import { errMsg } from "../Hooks/useTextField";
+import { errMsg } from "./FormTextField";
 
 function Row({ label, value }: { label: string; value?: ReactNode }) {
   return (
@@ -41,15 +41,25 @@ function Section({
   children: ReactNode;
 }) {
   return (
-    <Paper variant="outlined" sx={{ p: 2 }}>
+    <Paper
+      component="section"
+      aria-label={title}
+      variant="outlined"
+      sx={{ p: 2 }}
+    >
       <Stack spacing={1.5}>
         <Stack
           direction="row"
-          justifyContent="space-between"
-          alignItems="center"
+          sx={{ justifyContent: "space-between", alignItems: "center" }}
         >
-          <Typography fontWeight={600}>{title}</Typography>
-          <Button size="small" onClick={onEdit}>
+          <Typography sx={{ fontWeight: 600 }}>
+            {title}
+          </Typography>
+          <Button
+            size="small"
+            onClick={onEdit}
+            aria-label={`Chỉnh sửa ${title}`}
+          >
             Chỉnh sửa
           </Button>
         </Stack>
@@ -59,15 +69,16 @@ function Section({
   );
 }
 
-// onEdit(stepIndex): quay về đúng bước, dữ liệu các bước khác vẫn giữ nguyên
 export function StepReview({ onEdit }: { onEdit: (step: number) => void }) {
-  const { control, watch } = useFormContext<ApplicationForm>();
-  const v = watch();
+  const { control, getValues } = useFormContext<ApplicationForm>();
+  const v = getValues();
   const years = Number(v.yearsOfExperience);
 
   return (
     <Stack spacing={2}>
-      <Typography variant="h6">Xem lại & xác nhận</Typography>
+      <Typography variant="h6">
+        Xem lại & xác nhận
+      </Typography>
 
       <Section title="Thông tin cá nhân" onEdit={() => onEdit(0)}>
         <Row label="Họ và tên" value={v.fullName} />
@@ -86,7 +97,7 @@ export function StepReview({ onEdit }: { onEdit: (step: number) => void }) {
           v.workExperience.map((w, i) => (
             <Paper key={i} variant="outlined" sx={{ p: 1.5 }}>
               <Stack spacing={0.5}>
-                <Typography fontWeight={600}>
+                <Typography sx={{ fontWeight: 600 }}>
                   {w.companyName} – {w.role}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
@@ -125,11 +136,22 @@ export function StepReview({ onEdit }: { onEdit: (step: number) => void }) {
                 <Checkbox
                   checked={field.value}
                   onChange={(e) => field.onChange(e.target.checked)}
+                  slotProps={{
+                    input: {
+                      ref: field.ref,
+                      "aria-invalid": Boolean(fieldState.error),
+                      "aria-describedby": fieldState.error
+                        ? "agreedToTerms-error"
+                        : undefined,
+                    },
+                  }}
                 />
               }
             />
             {fieldState.error && (
-              <FormHelperText error>{errMsg(fieldState.error)}</FormHelperText>
+              <FormHelperText id="agreedToTerms-error" role="alert" error>
+                {errMsg(fieldState.error)}
+              </FormHelperText>
             )}
           </Box>
         )}
